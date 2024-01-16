@@ -3,17 +3,16 @@
 # -*- coding: utf-8 -*-
 
 import hashlib
+import sys
 import time
+from datetime import timedelta
+from logging import getLogger
+
+import requests
 import tqdm
 import ujson
-import requests
-import sys
-
 from elasticsearch import Elasticsearch, helpers
-from elasticsearch.helpers import parallel_bulk
-from elasticsearch.helpers import streaming_bulk
-from logging import getLogger
-from datetime import timedelta, datetime
+from elasticsearch.helpers import parallel_bulk, streaming_bulk
 
 from . import __VERSION__
 from .utils import memusage, time_to_sec, to_es_date
@@ -60,7 +59,7 @@ class Esdedupe:
             else:
                 self.log.error("{0}: {1}".format(uri, resp.text))
                 sys.exit(1)
-        except requests.exceptions.ConnectionError as e:
+        except requests.exceptions.ConnectionError:
             self.log.error(
                 "Connection failed. Is ES running on {0} ?".format(uri))
             self.log.error("Check --host argument and --port")
@@ -173,6 +172,7 @@ class Esdedupe:
         i = 0
         self.log.info("Building documents mapping on index: {}, batch size: {}".format(
             index, args.batch))
+        index_size = es.count(index=index)['count']
         for hit in helpers.scan(es, index=index, size=args.batch,
                                 query=self.es_query(args), scroll=args.scroll):
             self.build_index(docs_hash, unique_fields, hit)
@@ -181,6 +181,11 @@ class Esdedupe:
                 self.log.debug(
                     "Scanned {:0,} unique documents, memory usage: {}".format(
                         len(docs_hash), memusage()))
+            if (i % 100_000 == 0):
+                self.log.info(
+                    f"Scanned {len(docs_hash)}/{index_size} documents ({len(docs_hash)/index_size*100:.2f}%)"
+                )
+            
         return self.count_duplicates(docs_hash)
 
     def scan_and_remove(self, es, docs_hash, unique_fields, dupl, index, args):
